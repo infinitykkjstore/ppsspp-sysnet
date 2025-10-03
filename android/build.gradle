@@ -18,6 +18,10 @@ dependencies {
 	// Convenient wrapper around DocumentContract. Might look into writing our own
 	// to see if there's some performance to squeeze at some point, but doubt it.
 	implementation "androidx.documentfile:documentfile:1.1.0"
+
+	// OpenVPN library (ICS-OpenVPN / OpenVPN for Android by Arne Schwabe) via jitpack.
+	// This is optional: OpenVpnManager will fall back if classes are not present.
+	implementation 'com.github.schwabe:ics-openvpn:0.7.22'
 }
 
 android {

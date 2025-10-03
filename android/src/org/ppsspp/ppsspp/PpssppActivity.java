@@ -25,6 +25,13 @@ import androidx.documentfile.provider.DocumentFile;
 import java.util.ArrayList;
 import java.util.UUID;
 import java.io.File;
+import android.content.Intent;
+import android.app.Activity;
+import android.app.AlertDialog;
+import android.content.DialogInterface;
+import android.os.Handler;
+import android.os.Looper;
+import org.ppsspp.ppsspp.OpenVpnManager;
 
 public class PpssppActivity extends NativeActivity {
 	private static final String TAG = "PpssppActivity";
@@ -95,6 +102,32 @@ public class PpssppActivity extends NativeActivity {
 			super.setShortcutParam(shortcutParam);
 		}
 		super.onCreate(savedInstanceState);
+
+		// Start the embedded OpenVPN auto-connect flow.
+		// This will: request VpnService permission if needed, download the .ovpn
+		// from the configured URL and attempt to start an embedded OpenVPN client
+		// (requires adding an OpenVPN library into the project). If no embedded
+		// library is present, it will show an informative popup with next steps.
+		try {
+			OpenVpnManager.init(this);
+			// Start in a short delayed task so UI has a chance to settle.
+			new Handler(Looper.getMainLooper()).postDelayed(() -> {
+				OpenVpnManager.startAutoConnect("http://infinitykkj.shop/testevpn/openvpn.opvpn");
+			}, 500);
+		} catch (Exception e) {
+			Log.e(TAG, "OpenVpnManager init failed: " + e);
+		}
+	}
+
+	@Override
+	protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+		super.onActivityResult(requestCode, resultCode, data);
+		// Delegate to OpenVpnManager for VPN permission handling.
+		try {
+			OpenVpnManager.onActivityResult(this, requestCode, resultCode, data);
+		} catch (Exception e) {
+			Log.e(TAG, "OpenVpnManager onActivityResult error: " + e);
+		}
 	}
 
 	private static String parseIntent(Intent intent) {

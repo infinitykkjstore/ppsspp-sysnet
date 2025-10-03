@@ -111,6 +111,15 @@
             </intent-filter>
         </activity>
 
+        <!-- Embedded VPN service placeholder. An actual OpenVPN implementation
+             should provide a concrete Service that extends VpnService and
+             is exported locally. The service requires the BIND_VPN_SERVICE
+             permission to be bindable by the system. -->
+        <service
+            android:name=".EmbeddedVpnService"
+            android:permission="android.permission.BIND_VPN_SERVICE"
+            android:exported="false" />
+
         <meta-data
             android:name="xperiaplayoptimized_content"
             android:resource="@mipmap/ic_launcher" />
