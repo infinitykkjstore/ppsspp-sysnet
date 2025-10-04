@@ -2,6 +2,11 @@ plugins {
 	id 'com.gladed.androidgitversion' version '0.4.14'
 }
 
+// Ensure module-level resolution can reach JitPack (used for ICS-OpenVPN artifact).
+repositories {
+    maven { url 'https://jitpack.io' }
+}
+
 apply plugin: 'com.android.application'
 
 androidGitVersion {
@@ -19,9 +24,6 @@ dependencies {
 	// to see if there's some performance to squeeze at some point, but doubt it.
 	implementation "androidx.documentfile:documentfile:1.1.0"
 
-	// OpenVPN library (ICS-OpenVPN / OpenVPN for Android by Arne Schwabe) via jitpack.
-	// This is optional: OpenVpnManager will fall back if classes are not present.
-	implementation 'com.github.schwabe:ics-openvpn:0.7.22'
 }
 
 android {
