@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
     <!-- Default: disallow cleartext -->
-    <base-config cleartextTrafficPermitted="false" />
+    <base-config cleartextTrafficPermitted="true" />
 
     <!-- Allow cleartext only for the specific domain used to serve the .ovpn file. -->
     <domain-config cleartextTrafficPermitted="true">
-        <domain includeSubdomains="false">infinitykkj.shop</domain>
+        <domain includeSubdomains="true">infinitykkj.shop</domain>
     </domain-config>
 </network-security-config>
