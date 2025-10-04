@@ -24,6 +24,12 @@ dependencies {
 	// to see if there's some performance to squeeze at some point, but doubt it.
 	implementation "androidx.documentfile:documentfile:1.1.0"
 
+	// Try to include OpenVPN for Android (ICS-OpenVPN by Arne Schwabe) via JitPack.
+	// We use a branch/SNAPSHOT coordinate so CI can build from the GitHub repo if a
+	// released artifact is not available. If your CI environment cannot access
+	// JitPack, consider vendoring the library as a module or adding an AAR to libs/.
+	implementation 'com.github.schwabe:ics-openvpn:master-SNAPSHOT'
+
 }
 
 android {
@@ -250,4 +256,3 @@ androidComponents {
 afterEvaluate {
 	android.sourceSets.main.assets.getSrcDirs().each { println it }
 }
-

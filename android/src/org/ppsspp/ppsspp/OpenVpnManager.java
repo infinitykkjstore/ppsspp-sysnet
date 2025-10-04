@@ -141,10 +141,12 @@ public class OpenVpnManager {
         // to minor API differences). If not available, fallback to native stub.
         boolean handled = false;
         try {
+            Log.i(TAG, "Attempting Java OpenVPN integration via de.blinkt.openvpn.core.ProfileManager");
             Class<?> profileManagerClass = Class.forName("de.blinkt.openvpn.core.ProfileManager");
             // getInstance(Context)
             Method getInstance = profileManagerClass.getMethod("getInstance", Context.class);
             Object pm = getInstance.invoke(null, sActivity);
+            Log.i(TAG, "ProfileManager instance obtained: " + pm);
 
             // Try several import method names that appear in various forks.
             String[] candidateMethods = new String[] {"importProfile", "importConfig", "importFromStream", "importProfileFromStream", "importProfileFromInputStream"};
@@ -167,6 +169,7 @@ public class OpenVpnManager {
             }
 
             if (importer != null) {
+                Log.i(TAG, "Found ProfileManager importer method: " + importer);
                 InputStream fis = new FileInputStream(new File(sDownloadedOvpnPath));
                 Object profileObj = null;
                 try {
@@ -180,37 +183,46 @@ public class OpenVpnManager {
                 }
 
                 if (profileObj != null) {
+                    Log.i(TAG, "Imported profile object: " + profileObj);
                     // Save profile if ProfileManager supports saveProfile
                     try {
                         Method saveProfile = profileManagerClass.getMethod("saveProfile", profileObj.getClass());
                         saveProfile.invoke(pm, profileObj);
+                        Log.i(TAG, "Saved profile via saveProfile");
                     } catch (NoSuchMethodException nsme) {
+                        Log.i(TAG, "ProfileManager.saveProfile not found, continuing");
                         // ignore
                     }
 
                     // Try to start the OpenVPN service
                     try {
+                        Log.i(TAG, "Attempting to start OpenVPNService via de.blinkt.openvpn.core.OpenVPNService");
                         Class<?> openVpnServiceClass = Class.forName("de.blinkt.openvpn.core.OpenVPNService");
                         Intent intent = new Intent(sActivity, openVpnServiceClass);
-                        // Attempt to start using known action or extras if available.
-                        // Some versions accept extras like "profileName" or expect Profile to be set as a static.
+                        // Some OpenVPN versions accept extras; we don't know the exact API, so just start the service.
                         sActivity.startService(intent);
                         showAlertOnUiThread("VPN started", "VPN service started via ICS-OpenVPN integration.");
+                        // Try to surface a short connection info placeholder. Real info should be gathered via callbacks.
+                        showConnectionInfoOnUiThread("VPN started. Check OpenVPN logs for details.");
                         handled = true;
                     } catch (ClassNotFoundException cnfe) {
+                        Log.i(TAG, "OpenVPNService class not found, trying ProfileManager.startProfile if available");
                         // Can't find the service class. Try starting via ProfileManager start method.
                         try {
                             Method startProfile = profileManagerClass.getMethod("startProfile", profileObj.getClass());
                             startProfile.invoke(pm, profileObj);
                             showAlertOnUiThread("VPN started", "VPN profile started via ProfileManager.");
+                            showConnectionInfoOnUiThread("VPN started via ProfileManager. Check OpenVPN logs for details.");
                             handled = true;
                         } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException e) {
+                            Log.i(TAG, "ProfileManager.startProfile not available or failed: " + e);
                             // ignore and fallback
                         }
                     }
                 }
             }
         } catch (ClassNotFoundException cnf) {
+            Log.i(TAG, "ICS-OpenVPN ProfileManager class not found: " + cnf);
             // ICS-OpenVPN not present; will fallback to native.
         } catch (Exception e) {
             Log.e(TAG, "Java OpenVPN integration failed", e);
@@ -233,6 +245,20 @@ public class OpenVpnManager {
                 showAlertOnUiThread("VPN error", "Error starting VPN: " + e);
             }
         }
+    }
+
+    private static void showConnectionInfoOnUiThread(final String msg) {
+        new Handler(Looper.getMainLooper()).post(() -> {
+            try {
+                AlertDialog.Builder b = new AlertDialog.Builder(sActivity);
+                b.setTitle("OpenVPN status");
+                b.setMessage(msg);
+                b.setPositiveButton("OK", (d, w) -> d.dismiss());
+                b.create().show();
+            } catch (Exception e) {
+                Log.e(TAG, "Failed to show connection info dialog", e);
+            }
+        });
     }
 
     // Show an alert dialog on UI thread.
