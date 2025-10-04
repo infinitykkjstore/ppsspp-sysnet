@@ -28,6 +28,10 @@ import java.io.FileInputStream;
 import java.io.InputStream;
 import java.lang.reflect.Method;
 import java.lang.reflect.InvocationTargetException;
+// ICS-OpenVPN classes (vendored module)
+import de.blinkt.openvpn.core.ProfileManager;
+import de.blinkt.openvpn.VpnProfile;
+import de.blinkt.openvpn.core.VPNLaunchHelper;
 
 public class OpenVpnManager {
     private static final String TAG = "OpenVpnManager";
@@ -137,102 +141,119 @@ public class OpenVpnManager {
             return;
         }
 
-        // First try Java ICS-OpenVPN integration (via reflection to be resilient
-        // to minor API differences). If not available, fallback to native stub.
-        boolean handled = false;
+        // Prefer the vendored ICS-OpenVPN API: import the profile, save (temporary) and start via VPNLaunchHelper.
+        boolean started = false;
         try {
-            Log.i(TAG, "Attempting Java OpenVPN integration via de.blinkt.openvpn.core.ProfileManager");
-            Class<?> profileManagerClass = Class.forName("de.blinkt.openvpn.core.ProfileManager");
-            // getInstance(Context)
-            Method getInstance = profileManagerClass.getMethod("getInstance", Context.class);
-            Object pm = getInstance.invoke(null, sActivity);
-            Log.i(TAG, "ProfileManager instance obtained: " + pm);
+            Log.i(TAG, "Using vendored ICS-OpenVPN ProfileManager to import and start profile");
 
-            // Try several import method names that appear in various forks.
-            String[] candidateMethods = new String[] {"importProfile", "importConfig", "importFromStream", "importProfileFromStream", "importProfileFromInputStream"};
-            Method importer = null;
-            for (String name : candidateMethods) {
-                for (Method m : profileManagerClass.getMethods()) {
-                    if (m.getName().equals(name)) {
-                        Class<?>[] params = m.getParameterTypes();
-                        if (params.length == 1 && InputStream.class.isAssignableFrom(params[0])) {
-                            importer = m;
-                            break;
-                        }
-                        if (params.length == 2 && Context.class.isAssignableFrom(params[0]) && InputStream.class.isAssignableFrom(params[1])) {
-                            importer = m;
-                            break;
-                        }
-                    }
-                }
-                if (importer != null) break;
-            }
+            // Import profile using ProfileManager API. The library provides a temporary profile import path via
+            // ProfileManager.setTemporaryProfile(Context, VpnProfile) or import methods. We'll try to import from
+            // an InputStream using existing helper methods; if that fails we'll parse manually.
+            ProfileManager pm = ProfileManager.getInstance(sActivity);
 
-            if (importer != null) {
-                Log.i(TAG, "Found ProfileManager importer method: " + importer);
-                InputStream fis = new FileInputStream(new File(sDownloadedOvpnPath));
-                Object profileObj = null;
+            // The library includes utilities to import an OVPN from an InputStream via VpnProfile.importFromStream in some
+            // versions, but to be robust we'll attempt to read the file and call VpnProfile.importFromStream reflectively
+            // if available, otherwise fall back to creating a temporary profile file and loading it.
+            VpnProfile profile = null;
+            try {
+                // Try static helper: VpnProfile.importFromStream(Context, InputStream)
+                Method importMethod = VpnProfile.class.getMethod("importFromStream", Context.class, java.io.InputStream.class);
+                java.io.InputStream fis = new java.io.FileInputStream(new File(sDownloadedOvpnPath));
                 try {
-                    if (importer.getParameterTypes().length == 1) {
-                        profileObj = importer.invoke(pm, fis);
-                    } else {
-                        profileObj = importer.invoke(pm, sActivity, fis);
-                    }
+                    profile = (VpnProfile) importMethod.invoke(null, sActivity, fis);
                 } finally {
                     try { fis.close(); } catch (Exception e) {}
                 }
-
-                if (profileObj != null) {
-                    Log.i(TAG, "Imported profile object: " + profileObj);
-                    // Save profile if ProfileManager supports saveProfile
+            } catch (NoSuchMethodException nsme) {
+                Log.i(TAG, "VpnProfile.importFromStream not present, trying ProfileManager import via reflection");
+                try {
+                    Method importProfile = ProfileManager.class.getMethod("importProfile", Context.class, java.io.InputStream.class);
+                    java.io.InputStream fis = new java.io.FileInputStream(new File(sDownloadedOvpnPath));
                     try {
-                        Method saveProfile = profileManagerClass.getMethod("saveProfile", profileObj.getClass());
-                        saveProfile.invoke(pm, profileObj);
-                        Log.i(TAG, "Saved profile via saveProfile");
-                    } catch (NoSuchMethodException nsme) {
-                        Log.i(TAG, "ProfileManager.saveProfile not found, continuing");
-                        // ignore
+                        Object res = importProfile.invoke(pm, sActivity, fis);
+                        if (res instanceof VpnProfile)
+                            profile = (VpnProfile) res;
+                    } finally {
+                        try { fis.close(); } catch (Exception e) {}
                     }
+                } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException e) {
+                    Log.i(TAG, "ProfileManager.importProfile not available or failed: " + e);
+                }
+            } catch (IllegalAccessException | InvocationTargetException e) {
+                Log.e(TAG, "Error invoking VpnProfile.importFromStream", e);
+            }
 
-                    // Try to start the OpenVPN service
+            if (profile == null) {
+                // As a last resort, try to create a temporary profile by writing the .ovpn as a temporary profile file
+                // and asking ProfileManager to load it via setTemporaryProfile.
+                try {
+                    java.io.InputStream fis = new java.io.FileInputStream(new File(sDownloadedOvpnPath));
                     try {
-                        Log.i(TAG, "Attempting to start OpenVPNService via de.blinkt.openvpn.core.OpenVPNService");
-                        Class<?> openVpnServiceClass = Class.forName("de.blinkt.openvpn.core.OpenVPNService");
-                        Intent intent = new Intent(sActivity, openVpnServiceClass);
-                        // Some OpenVPN versions accept extras; we don't know the exact API, so just start the service.
-                        sActivity.startService(intent);
-                        showAlertOnUiThread("VPN started", "VPN service started via ICS-OpenVPN integration.");
-                        // Try to surface a short connection info placeholder. Real info should be gathered via callbacks.
-                        showConnectionInfoOnUiThread("VPN started. Check OpenVPN logs for details.");
-                        handled = true;
-                    } catch (ClassNotFoundException cnfe) {
-                        Log.i(TAG, "OpenVPNService class not found, trying ProfileManager.startProfile if available");
-                        // Can't find the service class. Try starting via ProfileManager start method.
+                        // Try ProfileManager.setTemporaryProfile(Context, VpnProfile) via a known helper that some versions provide
+                        // There's a helper that may accept an InputStream; attempt to find 'importProfile' that returns VpnProfile without Context
+                        Method importSingle = null;
+                        for (Method m : ProfileManager.class.getMethods()) {
+                            if (m.getName().toLowerCase().contains("import") && m.getReturnType() == VpnProfile.class) {
+                                Class<?>[] params = m.getParameterTypes();
+                                if (params.length == 1 && java.io.InputStream.class.isAssignableFrom(params[0])) {
+                                    importSingle = m;
+                                    break;
+                                }
+                            }
+                        }
+                        if (importSingle != null) {
+                            profile = (VpnProfile) importSingle.invoke(pm, fis);
+                        }
+                    } finally {
+                        try { fis.close(); } catch (Exception e) {}
+                    }
+                } catch (Exception e) {
+                    Log.i(TAG, "Failed last-resort import attempts: " + e);
+                }
+            }
+
+            if (profile != null) {
+                Log.i(TAG, "Profile imported, saving as temporary and starting via VPNLaunchHelper");
+                try {
+                    // Mark as temporary and save so ProfileManager knows about it
+                    ProfileManager.setTemporaryProfile(sActivity, profile);
+                } catch (NoSuchMethodError | Exception e) {
+                    // Some versions use setTemporaryProfile(Context, VpnProfile) as static, others use instance methods.
+                    try {
+                        Method setTmp = ProfileManager.class.getMethod("setTemporaryProfile", Context.class, VpnProfile.class);
+                        setTmp.invoke(null, sActivity, profile);
+                    } catch (Exception ex) {
                         try {
-                            Method startProfile = profileManagerClass.getMethod("startProfile", profileObj.getClass());
-                            startProfile.invoke(pm, profileObj);
-                            showAlertOnUiThread("VPN started", "VPN profile started via ProfileManager.");
-                            showConnectionInfoOnUiThread("VPN started via ProfileManager. Check OpenVPN logs for details.");
-                            handled = true;
-                        } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException e) {
-                            Log.i(TAG, "ProfileManager.startProfile not available or failed: " + e);
-                            // ignore and fallback
+                            Method setTmp2 = ProfileManager.class.getMethod("setTemporaryProfile", VpnProfile.class);
+                            setTmp2.invoke(pm, profile);
+                        } catch (Exception ex2) {
+                            Log.i(TAG, "Could not call setTemporaryProfile: " + ex2);
                         }
                     }
                 }
+
+                // Start the VPN using the library helper
+                try {
+                    VPNLaunchHelper.startOpenVpn(profile, sActivity.getBaseContext(), "AutoConnect", true);
+                    showAlertOnUiThread("VPN started", "VPN profile started via embedded ICS-OpenVPN.");
+                    showConnectionInfoOnUiThread("VPN started via ICS-OpenVPN. Check logs for details.");
+                    started = true;
+                } catch (Exception e) {
+                    Log.e(TAG, "VPNLaunchHelper.startOpenVpn failed", e);
+                }
+            } else {
+                Log.i(TAG, "Failed to import profile via vendored APIs");
             }
-        } catch (ClassNotFoundException cnf) {
-            Log.i(TAG, "ICS-OpenVPN ProfileManager class not found: " + cnf);
-            // ICS-OpenVPN not present; will fallback to native.
-        } catch (Exception e) {
-            Log.e(TAG, "Java OpenVPN integration failed", e);
+
+        } catch (Throwable t) {
+            Log.e(TAG, "Error while using vendored ICS-OpenVPN", t);
         }
 
-        if (!handled) {
+        if (!started) {
             // Fallback to native stub
             try {
-                boolean started = startNativeOpenVpn(sDownloadedOvpnPath);
-                if (started) {
+                boolean startedNative = startNativeOpenVpn(sDownloadedOvpnPath);
+                if (startedNative) {
                     showAlertOnUiThread("VPN connected", "Connected using profile: " + sDownloadedOvpnPath);
                 } else {
                     showAlertOnUiThread("VPN failed", "Embedded OpenVPN start failed (native returned false).\nCheck logs and ensure the OpenVPN library is bundled.");

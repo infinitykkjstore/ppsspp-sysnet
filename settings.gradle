@@ -1,1 +1,4 @@
 include ':android'
+// Include the local copy of ICS-OpenVPN main module so CI builds deterministically.
+include ':ics-openvpn-main'
+project(':ics-openvpn-main').projectDir = file('ics-openvpn-master/main')
