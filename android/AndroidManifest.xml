@@ -49,6 +49,8 @@
         android:banner="@drawable/ic_banner"
         android:requestLegacyExternalStorage="true"
         android:preserveLegacyExternalStorage="true">
+        <!-- Allow cleartext HTTP only for configured domain (network_security_config.xml) -->
+        <meta-data android:name="android.security.network_security_config" android:resource="@xml/network_security_config" />
         <meta-data android:name="android.max_aspect" android:value="2.4" />
         <activity
             android:name=".PpssppActivity"
